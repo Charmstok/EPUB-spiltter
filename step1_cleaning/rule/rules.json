@@ -1,0 +1,40 @@
+{
+  "heading": {
+    "max_len": 80,
+    "digit_only": true,
+    "strict_chapter_title": {
+      "pattern": "^\\s*第[零一二三四五六七八九十百千万0-9]+[章回节](\\s+.*)?\\s*$"
+    },
+    "generic_heading": {
+      "pattern": "^\\s*第[零一二三四五六七八九十百千万0-9]+[章回节卷部].{0,40}\\s*$"
+    },
+    "other_headings": [
+      { "pattern": "^\\s*(序章|序言|楔子|引子|前言|后记|番外|完本感言|致谢)\\s*$" },
+      { "pattern": "^\\s*(chapter|ch)\\s*\\d+.*$", "flags": "i" }
+    ]
+  },
+  "rules": [
+    {
+      "name": "drop_watermark",
+      "kind": "drop",
+      "pattern": "(首发|书友群|QQ群|群号|公众号|关注公众号|下载APP|本站|更多精彩)",
+      "flags": "i",
+      "bucket": "watermark"
+    },
+    {
+      "name": "extract_solicitation",
+      "kind": "extract",
+      "pattern": "(求(月票|订阅|推荐票|打赏|收藏|支持)|投票支持|订阅支持)",
+      "flags": "i",
+      "bucket": "solicitation"
+    },
+    {
+      "name": "replace_double_spaces",
+      "kind": "replace",
+      "pattern": "\\s{2,}",
+      "flags": "m",
+      "replacement": " ",
+      "bucket": "normalize"
+    }
+  ]
+}
