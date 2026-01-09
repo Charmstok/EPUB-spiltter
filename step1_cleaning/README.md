@@ -41,6 +41,8 @@ python3 -m step1_cleaning.clean book/xxx.epub --extracted-out extracted.jsonl
 
 - `heading.max_len`：标题行最大长度，超过则不当作标题
 - `heading.digit_only`：是否把纯数字行当作标题（常见于分隔页码）
+- `heading.skip_leading_titles`：遇到严格章节标题后，额外跳过开头若干行“像标题但不是标题”的短行（例如重复的章节名/卷名）
+- `heading.leading_title_max_len`：上述“短行”的最大长度
 - `heading.strict_chapter_title`：严格章节标题（命中则“开始保留正文”）
 - `heading.generic_heading`：宽松标题识别（命中则当作标题行，用于切断/跳过）
 - `heading.other_headings`：其它标题规则列表（如前言/后记/番外、英文 chapter 等）

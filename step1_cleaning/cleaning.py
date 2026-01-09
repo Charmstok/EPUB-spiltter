@@ -23,6 +23,8 @@ class HeadingMatcher:
     generic_heading: re.Pattern[str]
     other_headings: list[re.Pattern[str]]
     digit_only: bool = True
+    skip_leading_titles: int = 0
+    leading_title_max_len: int = 20
 
     def is_strict_chapter_title(self, line: str) -> bool:
         if not line:
@@ -45,6 +47,20 @@ class HeadingMatcher:
         if self.generic_heading.match(s):
             return True
         return any(pat.match(s) for pat in self.other_headings)
+
+
+_TITLE_LIKE_ALLOWED = re.compile(r"^[0-9A-Za-z\u4e00-\u9fff《》〈〉「」『』“”‘’·—\-？！!?… ]+$")
+
+
+def looks_like_leading_title(line: str, *, max_len: int) -> bool:
+    s = line.strip()
+    if not s or len(s) > max_len:
+        return False
+    if "。" in s:
+        return False
+    if any(ch in "，,;；:：" for ch in s):
+        return False
+    return bool(_TITLE_LIKE_ALLOWED.match(s))
 
 
 def _compile_pattern(entry: Any, *, default_flags: str = "") -> re.Pattern[str]:
@@ -84,6 +100,12 @@ def parse_heading_matcher(data: dict[str, Any]) -> HeadingMatcher:
     digit_only = data.get("digit_only", True)
     if not isinstance(digit_only, bool):
         raise ValueError("heading.digit_only must be a boolean")
+    skip_leading_titles = data.get("skip_leading_titles", 0)
+    if not isinstance(skip_leading_titles, int) or skip_leading_titles < 0:
+        raise ValueError("heading.skip_leading_titles must be a non-negative integer")
+    leading_title_max_len = data.get("leading_title_max_len", 20)
+    if not isinstance(leading_title_max_len, int) or leading_title_max_len <= 0:
+        raise ValueError("heading.leading_title_max_len must be a positive integer")
 
     strict = data.get("strict_chapter_title")
     generic = data.get("generic_heading")
@@ -102,6 +124,8 @@ def parse_heading_matcher(data: dict[str, Any]) -> HeadingMatcher:
         generic_heading=_compile_pattern(generic),
         other_headings=[_compile_pattern(e) for e in others],
         digit_only=digit_only,
+        skip_leading_titles=skip_leading_titles,
+        leading_title_max_len=leading_title_max_len,
     )
 
 
@@ -188,13 +212,19 @@ def clean_text_to_sentences(text: str, rules: Iterable[Rule], headings: HeadingM
     sentences: list[str] = []
     extracted: list[Match] = []
     include = False
+    skip_leading = 0
 
     for paragraph in iter_paragraphs(normalized):
         if headings.is_any_heading(paragraph):
             include = headings.is_strict_chapter_title(paragraph)
+            skip_leading = headings.skip_leading_titles if include else 0
             continue
         if not include:
             continue
+        if skip_leading > 0 and looks_like_leading_title(paragraph, max_len=headings.leading_title_max_len):
+            skip_leading -= 1
+            continue
+        skip_leading = 0
         for sentence in iter_sentences(paragraph):
             cleaned, matches = apply_rules(sentence.strip(), rules)
             extracted.extend(matches)

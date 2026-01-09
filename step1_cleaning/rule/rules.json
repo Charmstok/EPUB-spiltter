@@ -2,6 +2,8 @@
   "heading": {
     "max_len": 80,
     "digit_only": true,
+    "skip_leading_titles": 2,
+    "leading_title_max_len": 20,
     "strict_chapter_title": {
       "pattern": "^\\s*第[零一二三四五六七八九十百千万0-9]+[章回节](\\s+.*)?\\s*$"
     },
