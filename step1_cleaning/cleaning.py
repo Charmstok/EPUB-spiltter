@@ -51,6 +51,9 @@ class HeadingMatcher:
 
 _TITLE_LIKE_ALLOWED = re.compile(r"^[0-9A-Za-z\u4e00-\u9fff《》〈〉「」『』“”‘’·—\-？！!?… ]+$")
 
+_OPEN_QUOTES_ONLY = re.compile(r"^[“‘「『《〈]+$")
+_CLOSE_QUOTES_ONLY = re.compile(r"^[”’」』》〉】）]+$")
+
 
 def looks_like_leading_title(line: str, *, max_len: int) -> bool:
     s = line.strip()
@@ -213,6 +216,7 @@ def clean_text_to_sentences(text: str, rules: Iterable[Rule], headings: HeadingM
     extracted: list[Match] = []
     include = False
     skip_leading = 0
+    pending_prefix = ""
 
     for paragraph in iter_paragraphs(normalized):
         if headings.is_any_heading(paragraph):
@@ -232,6 +236,15 @@ def clean_text_to_sentences(text: str, rules: Iterable[Rule], headings: HeadingM
                 continue
             cleaned = cleaned.strip()
             if not cleaned:
+                continue
+            if pending_prefix:
+                cleaned = pending_prefix + cleaned
+                pending_prefix = ""
+            if _OPEN_QUOTES_ONLY.match(cleaned):
+                pending_prefix += cleaned
+                continue
+            if _CLOSE_QUOTES_ONLY.match(cleaned) and sentences:
+                sentences[-1] += cleaned
                 continue
             sentences.append(cleaned)
     return CleanResult(sentences=sentences, extracted=extracted)

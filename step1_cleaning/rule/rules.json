@@ -19,7 +19,7 @@
     {
       "name": "drop_watermark",
       "kind": "drop",
-      "pattern": "(首发|书友群|QQ群|群号|公众号|关注公众号|下载APP|本站|更多精彩)",
+      "pattern": "(书友群|QQ群|群号|公众号|关注公众号|下载APP|本站|更多精彩)",
       "flags": "i",
       "bucket": "watermark"
     },
