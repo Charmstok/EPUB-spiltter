@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Iterable
 
 
@@ -14,6 +16,50 @@ class Cut:
 
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+_PROMPT_PATH = Path(__file__).resolve().parent / "prompt.md"
+
+
+@lru_cache(maxsize=1)
+def _load_prompt_sections() -> tuple[str, str]:
+    if not _PROMPT_PATH.exists():
+        raise FileNotFoundError(f"prompt file not found: {_PROMPT_PATH}")
+
+    system_lines: list[str] = []
+    user_lines: list[str] = []
+    current: str | None = None
+    for raw in _PROMPT_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw.rstrip("\n")
+        if line.strip() == "## system":
+            current = "system"
+            continue
+        if line.strip() == "## user":
+            current = "user"
+            continue
+        if current == "system":
+            system_lines.append(line)
+        elif current == "user":
+            user_lines.append(line)
+
+    system = "\n".join(system_lines).strip()
+    user = "\n".join(user_lines).strip()
+    if not system or not user:
+        raise ValueError(f"prompt.md must contain both '## system' and '## user' sections: {_PROMPT_PATH}")
+    return system, user
+
+
+def _render_user_prompt(
+    template: str,
+    *,
+    start_line: int,
+    target_chars_min: int,
+    target_chars_max: int,
+) -> str:
+    return (
+        template.replace("{{start_line}}", str(start_line))
+        .replace("{{target_chars_min}}", str(target_chars_min))
+        .replace("{{target_chars_max}}", str(target_chars_max))
+    )
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -43,27 +89,17 @@ def build_messages(
     target_chars_min: int,
     target_chars_max: int,
 ) -> list[dict[str, str]]:
-    system = (
-        "你是一个小说文本切分器。你的任务是把输入按行编号的句子切分成多个 slice（完整小故事）。"
-        "你必须严格按要求输出 JSON，不要输出任何额外文本。"
-    )
-    user = (
-        "请把以下文本切分为若干 slice，并返回切分点。\n"
-        "要求：\n"
-        f"1) 每个 slice 字数（非空白字符）尽量在 {target_chars_min}～{target_chars_max} 左右，可以略有偏差。\n"
-        "2) 必须在句子边界切分（只能在行与行之间切）。\n"
-        "3) 只返回本次提供文本中【能组成完整 slice】的切分点；如果末尾不足以组成完整 slice，请不要切最后一段。\n"
-        "4) 切分点用 end_line 表示（1-based，包含该行）。end_line 必须严格递增。\n"
-        "\n"
-        "输出格式（严格 JSON）：\n"
-        '{"cuts":[{"end_line":123,"title":"可选","summary":"可选"}]}\n'
-        "\n"
-        f"本次文本从第 {start_line} 行开始，内容如下（每行格式：<line_no>\\t<sentence>）：\n"
+    system, user_template = _load_prompt_sections()
+    user = _render_user_prompt(
+        user_template,
+        start_line=start_line,
+        target_chars_min=target_chars_min,
+        target_chars_max=target_chars_max,
     )
     body = "\n".join(f"{i}\t{t}" for i, t in lines)
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": user + body},
+        {"role": "user", "content": user.rstrip() + "\n" + body},
     ]
 
 
