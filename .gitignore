@@ -210,3 +210,9 @@ __marimo__/
 book/*.epub
 book/*.txt
 book/*.jsonl
+book/*_slice/
+book/*_slice/**
+
+# step2_slice secrets (keep *.example.json tracked)
+step2_slice/config/*.json
+!step2_slice/config/*.example.json
