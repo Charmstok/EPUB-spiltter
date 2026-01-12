@@ -1,0 +1,17 @@
+{
+  "providers": {
+    "volc": {
+      "type": "volc_ark",
+      "base_url": "https://ark.cn-beijing.volces.com",
+      "api_key_env": "VOLC_ARK_API_KEY",
+      "model": "ep-xxxxxxx"
+    },
+    "openai": {
+      "type": "openai_compatible",
+      "base_url": "https://api.openai.com",
+      "api_key_env": "OPENAI_API_KEY",
+      "model": "gpt-4o-mini"
+    }
+  }
+}
+
