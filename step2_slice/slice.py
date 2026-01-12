@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from .config import load_provider_config, load_slice_config
-from .pipeline import slice_txt_to_json
+from .pipeline import SliceRunError, slice_txt_to_json
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,16 +57,22 @@ def main(argv: list[str] | None = None) -> int:
 
     providers = load_provider_config(llm_path)
     slice_cfg = load_slice_config(slice_path)
-    out_path = slice_txt_to_json(
-        args.txt,
-        providers=providers,
-        slice_config=slice_cfg,
-        out_dir=args.out_dir,
-        max_slices=(args.max_slices or None),
-        dry_run=bool(args.dry_run),
-    )
-    print(out_path)
-    return 0
+    try:
+        out_path = slice_txt_to_json(
+            args.txt,
+            providers=providers,
+            slice_config=slice_cfg,
+            out_dir=args.out_dir,
+            max_slices=(args.max_slices or None),
+            dry_run=bool(args.dry_run),
+        )
+    except SliceRunError as e:
+        # Keep stdout machine-friendly (print output path), and stderr human-friendly.
+        print(e.out_path)
+        return 2
+    else:
+        print(out_path)
+        return 0
 
 
 if __name__ == "__main__":
