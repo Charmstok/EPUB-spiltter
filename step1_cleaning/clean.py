@@ -11,13 +11,13 @@ from .pipeline import clean_epub_to_sentences
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m step1_cleaning.clean",
-        description="Clean EPUB into plain sentences (one per line) using step1_cleaning/rule/rules.json.",
+        description="Clean EPUB into plain paragraphs (one per line) using step1_cleaning/rule/rules.json.",
     )
     p.add_argument("epub", nargs="?", help="Path to .epub file")
     p.add_argument(
         "-o",
         "--out",
-        help="Output .txt path (sentences, one per line). Default: book/<epub_stem>.txt",
+        help="Output .txt path (paragraphs, one per line). Default: book/<epub_stem>.txt",
     )
     p.add_argument(
         "--extracted-out",
@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
 
     out_path = Path(args.out) if args.out else (Path("book") / (Path(args.epub).stem + ".txt"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(result.sentences) + "\n", encoding="utf-8")
+    out_path.write_text("\n".join(result.lines) + "\n", encoding="utf-8")
 
     if args.extracted_out:
         extracted_path = Path(args.extracted_out)

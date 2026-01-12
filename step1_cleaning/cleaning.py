@@ -170,34 +170,49 @@ def iter_paragraphs(text: str) -> Iterator[str]:
 def iter_sentences(text: str) -> Iterator[str]:
     buf: list[str] = []
     prev = ""
+    pending_end = False
+    close_quotes = set("”’」』》〉】）")
     for ch in text:
+        if pending_end:
+            if ch in close_quotes:
+                buf.append(ch)
+                continue
+            sentence = "".join(buf).strip()
+            if sentence:
+                yield sentence
+            buf = [ch]
+            prev = ch
+            pending_end = False
+            continue
+
         if ch == "\n":
             sentence = "".join(buf).strip()
             if sentence:
                 yield sentence
             buf = []
             prev = ""
+            pending_end = False
             continue
 
         buf.append(ch)
         if ch in "。！？!?":
-            sentence = "".join(buf).strip()
-            if sentence:
-                yield sentence
-            buf = []
+            pending_end = True
             prev = ""
             continue
         if ch == "…":
             if prev == "…":
-                sentence = "".join(buf).strip()
-                if sentence:
-                    yield sentence
-                buf = []
+                pending_end = True
                 prev = ""
                 continue
             prev = "…"
         else:
             prev = ch
+
+    if pending_end:
+        sentence = "".join(buf).strip()
+        if sentence:
+            yield sentence
+        return
 
     tail = "".join(buf).strip()
     if tail:
@@ -206,17 +221,23 @@ def iter_sentences(text: str) -> Iterator[str]:
 
 @dataclass(frozen=True)
 class CleanResult:
-    sentences: list[str]
+    lines: list[str]
     extracted: list[Match]
 
+def _needs_space(prev: str, nxt: str) -> bool:
+    if not prev or not nxt:
+        return False
+    a = prev[-1]
+    b = nxt[0]
+    return a.isascii() and b.isascii() and a.isalnum() and b.isalnum()
 
-def clean_text_to_sentences(text: str, rules: Iterable[Rule], headings: HeadingMatcher) -> CleanResult:
+
+def clean_text_to_paragraph_lines(text: str, rules: Iterable[Rule], headings: HeadingMatcher) -> CleanResult:
     normalized = normalize_text(text)
-    sentences: list[str] = []
+    lines: list[str] = []
     extracted: list[Match] = []
     include = False
     skip_leading = 0
-    pending_prefix = ""
 
     for paragraph in iter_paragraphs(normalized):
         if headings.is_any_heading(paragraph):
@@ -229,6 +250,20 @@ def clean_text_to_sentences(text: str, rules: Iterable[Rule], headings: HeadingM
             skip_leading -= 1
             continue
         skip_leading = 0
+
+        if lines:
+            s = paragraph.lstrip()
+            i = 0
+            while i < len(s) and s[i] in "”’」』》〉】）":
+                i += 1
+            if i > 0:
+                lines[-1] += s[:i]
+                paragraph = s[i:].lstrip()
+                if not paragraph:
+                    continue
+
+        kept: list[str] = []
+        pending_prefix = ""
         for sentence in iter_sentences(paragraph):
             cleaned, matches = apply_rules(sentence.strip(), rules)
             extracted.extend(matches)
@@ -243,8 +278,25 @@ def clean_text_to_sentences(text: str, rules: Iterable[Rule], headings: HeadingM
             if _OPEN_QUOTES_ONLY.match(cleaned):
                 pending_prefix += cleaned
                 continue
-            if _CLOSE_QUOTES_ONLY.match(cleaned) and sentences:
-                sentences[-1] += cleaned
+            if _CLOSE_QUOTES_ONLY.match(cleaned) and kept:
+                kept[-1] += cleaned
                 continue
-            sentences.append(cleaned)
-    return CleanResult(sentences=sentences, extracted=extracted)
+            kept.append(cleaned)
+
+        if pending_prefix:
+            if kept:
+                kept[-1] += pending_prefix
+            elif lines:
+                lines[-1] += pending_prefix
+
+        paragraph_line = ""
+        for s in kept:
+            if not paragraph_line:
+                paragraph_line = s
+            else:
+                paragraph_line += (" " if _needs_space(paragraph_line, s) else "") + s
+        paragraph_line = paragraph_line.strip()
+        if paragraph_line:
+            lines.append(paragraph_line)
+
+    return CleanResult(lines=lines, extracted=extracted)

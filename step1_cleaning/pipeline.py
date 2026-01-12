@@ -4,7 +4,7 @@ import zipfile
 from pathlib import Path
 from typing import Iterable
 
-from .cleaning import CleanResult, HeadingMatcher, clean_text_to_sentences
+from .cleaning import CleanResult, HeadingMatcher, clean_text_to_paragraph_lines
 from .epub import iter_text_documents
 from .html_text import html_to_text
 from .rules import Rule
@@ -31,4 +31,4 @@ def clean_epub_to_sentences(
                 continue
             texts.append(html_to_text(doc_bytes))
 
-    return clean_text_to_sentences("\n\n".join(texts), rules_list, headings)
+    return clean_text_to_paragraph_lines("\n\n".join(texts), rules_list, headings)
