@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,6 +30,12 @@ class SliceItem:
     provider: str | None = None
     model: str | None = None
     error: str | None = None
+
+
+class SliceRunError(RuntimeError):
+    def __init__(self, *, out_path: Path, message: str):
+        super().__init__(message)
+        self.out_path = out_path
 
 
 def _timestamp_dirname() -> str:
@@ -149,6 +156,7 @@ def slice_txt_to_json(
 
     slice_id = 1
     cur = 0
+    run_error: str | None = None
     with out_json.open("w", encoding="utf-8") as f:
         f.write("[\n")
         first_item = True
@@ -250,6 +258,7 @@ def slice_txt_to_json(
                     error=str(last_error) if last_error is not None else "LLM returned no valid cuts",
                 )
                 write_item(item)
+                run_error = item.error
                 stop = True
                 continue
 
@@ -261,8 +270,11 @@ def slice_txt_to_json(
                     continue
                 text = "\n".join(sentences[cur : end_idx + 1])
                 char_len = count_chars(text)
-                if char_len < slice_config.target_chars_min or char_len > slice_config.target_chars_max:
-                    # 不要在这一块上做进一步的削减；将剩余部分保留到下次请求
+                if char_len < slice_config.target_chars_min:
+                    # 这个切分点太靠前了，继续尝试后面的切分点（更长，可能达标）
+                    continue
+                if char_len > slice_config.target_chars_max:
+                    # 已经超过上限，后面的 end_line 只会更长，直接终止
                     break
                 item = SliceItem(
                     slice_id=slice_id,
@@ -299,12 +311,24 @@ def slice_txt_to_json(
                     method="error",
                     provider=used_provider,
                     model=used_model,
-                    error="LLM returned cuts but none could be applied (slice length out of range or invalid end_line)",
+                    error=(
+                        "LLM returned cuts but none could be applied: "
+                        f"no candidate end_line produced char_len within "
+                        f"[{slice_config.target_chars_min}, {slice_config.target_chars_max}] "
+                        "under current counting rules"
+                    ),
                 )
                 write_item(item)
+                run_error = item.error
                 stop = True
 
         f.write("\n]\n")
+
+    if run_error:
+        # Also surface the error in terminal output (stderr), while keeping output JSON written.
+        print(f"slice error: {run_error}", file=sys.stderr)
+        print(f"output: {out_json}", file=sys.stderr)
+        raise SliceRunError(out_path=out_json, message=run_error)
 
     return out_json
 
