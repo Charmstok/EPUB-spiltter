@@ -45,6 +45,11 @@ python3 -m step2_slice.slice book/xxx.txt
 python3 -m step2_slice.slice book/xxx.txt --max-slices 20
 ```
 
+运行时会显示进度条：
+
+- 指定 `--max-slices`：按分片数计算进度
+- 未指定 `--max-slices`：按已处理行数（非空行）计算进度
+
 ## 配置说明
 
 ### 1) `llm.json`（多家 API）

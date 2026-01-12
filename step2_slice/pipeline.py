@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,7 @@ def slice_txt_to_json(
     out_dir: str | Path | None = None,
     max_slices: int | None = None,
     dry_run: bool = False,
+    progress_cb: Callable[[int, int, int], None] | None = None,
 ) -> Path:
     txt_path = Path(txt_path)
     sentences = [line.strip() for line in txt_path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -197,6 +199,8 @@ def slice_txt_to_json(
                 slice_id += 1
                 cur = end_idx + 1
                 slices_written += 1
+                if progress_cb:
+                    progress_cb(slices_written, cur, len(sentences))
                 continue
 
             chunk_end = _choose_chunk_end(sentences, start_idx=cur, chunk_input_tokens=slice_config.chunk_input_tokens)
@@ -263,6 +267,8 @@ def slice_txt_to_json(
                         models_used.add(used_model)
                     slice_id += 1
                     cur = chunk_end
+                    if progress_cb:
+                        progress_cb(slices_written, cur, len(sentences))
                     stop = True
                     continue
 
@@ -283,6 +289,8 @@ def slice_txt_to_json(
                     "start_line": item.start_line,
                     "end_line": item.end_line,
                 }
+                if progress_cb:
+                    progress_cb(slices_written, cur, len(sentences))
                 stop = True
                 continue
 
@@ -334,6 +342,8 @@ def slice_txt_to_json(
                     stop = True
                 cur = end_idx + 1
                 progressed = True
+                if progress_cb:
+                    progress_cb(slices_written, cur, len(sentences))
                 if stop:
                     break
 
@@ -357,6 +367,8 @@ def slice_txt_to_json(
                     "start_line": item.start_line,
                     "end_line": item.end_line,
                 }
+                if progress_cb:
+                    progress_cb(slices_written, cur, len(sentences))
                 stop = True
 
         f.write("\n]\n")
@@ -373,6 +385,8 @@ def slice_txt_to_json(
 
     if run_error:
         # Also surface the error in terminal output (stderr), while keeping output JSON written.
+        if progress_cb:
+            print(file=sys.stderr)
         if run_error_ctx:
             ctx = ", ".join(f"{k}={v}" for k, v in run_error_ctx.items() if v is not None)
             print(f"slice error: {run_error} ({ctx})", file=sys.stderr)
@@ -382,6 +396,8 @@ def slice_txt_to_json(
         print(f"run: {meta_path}", file=sys.stderr)
         raise SliceRunError(out_path=out_json, message=run_error)
 
+    if progress_cb:
+        progress_cb(slices_written, len(sentences), len(sentences))
     return out_json
 
 
