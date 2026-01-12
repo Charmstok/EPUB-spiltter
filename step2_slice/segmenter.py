@@ -50,7 +50,7 @@ def build_messages(
     user = (
         "请把以下文本切分为若干 slice，并返回切分点。\n"
         "要求：\n"
-        f"1) 每个 slice 字数（非空白字符）在 {target_chars_min}～{target_chars_max} 之间。\n"
+        f"1) 每个 slice 字数（非空白字符）尽量在 {target_chars_min}～{target_chars_max} 左右，可以略有偏差。\n"
         "2) 必须在句子边界切分（只能在行与行之间切）。\n"
         "3) 只返回本次提供文本中【能组成完整 slice】的切分点；如果末尾不足以组成完整 slice，请不要切最后一段。\n"
         "4) 切分点用 end_line 表示（1-based，包含该行）。end_line 必须严格递增。\n"
@@ -120,4 +120,3 @@ def validate_cuts(
         out.append(c)
         prev = c.end_line
     return out
-

@@ -18,17 +18,12 @@ from .slicing import count_chars, estimate_tokens
 @dataclass(frozen=True)
 class SliceItem:
     slice_id: int
-    source_txt: str
     start_line: int
     end_line: int
     char_len: int | None
     text: str | None
-    created_at: str
-    method: str  # llm | fallback | dry_run | error
     title: str | None = None
     summary: str | None = None
-    provider: str | None = None
-    model: str | None = None
     error: str | None = None
 
 
@@ -121,22 +116,25 @@ def slice_txt_to_json(
     out_json = out_base / "slices.json"
     meta_path = out_base / "run.json"
 
-    meta_path.write_text(
-        json.dumps(
-            {
-                "source_txt": str(txt_path),
-                "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                "slice_config": asdict(slice_config),
-                "provider_order": slice_config.provider_order,
-                "dry_run": dry_run,
-                "max_slices": max_slices,
-            },
-            ensure_ascii=False,
-            indent=2,
+    run_meta: dict[str, Any] = {
+        "source_txt": str(txt_path),
+        "source_text": str(txt_path),
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        "slice_config": asdict(slice_config),
+        "provider_order": slice_config.provider_order,
+        "dry_run": dry_run,
+        "max_slices": max_slices,
+        "output_format": "json",
+        "output_file": str(out_json),
+    }
+
+    def write_run_json() -> None:
+        meta_path.write_text(
+            json.dumps(run_meta, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
+
+    write_run_json()
 
     if dry_run:
         provider_clients: dict[str, tuple[ChatProvider, ProviderConfig]] = {}
@@ -157,6 +155,10 @@ def slice_txt_to_json(
     slice_id = 1
     cur = 0
     run_error: str | None = None
+    run_error_ctx: dict[str, Any] | None = None
+    providers_used: set[str] = set()
+    models_used: set[str] = set()
+    slices_written = 0
     with out_json.open("w", encoding="utf-8") as f:
         f.write("[\n")
         first_item = True
@@ -186,17 +188,15 @@ def slice_txt_to_json(
                 text = "\n".join(sentences[cur : end_idx + 1])
                 item = SliceItem(
                     slice_id=slice_id,
-                    source_txt=str(txt_path),
                     start_line=cur + 1,
                     end_line=end_idx + 1,
                     char_len=count_chars(text),
                     text=text,
-                    created_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                    method="dry_run",
                 )
                 write_item(item)
                 slice_id += 1
                 cur = end_idx + 1
+                slices_written += 1
                 continue
 
             chunk_end = _choose_chunk_end(sentences, start_idx=cur, chunk_input_tokens=slice_config.chunk_input_tokens)
@@ -244,53 +244,91 @@ def slice_txt_to_json(
                     break
 
             if not cuts:
+                # If we're at the end of the book and the model returns no cuts, emit the remaining
+                # text as the final slice (range is only a target, not a strict constraint).
+                if last_error is None and chunk_end == len(sentences):
+                    text = "\n".join(sentences[cur:chunk_end])
+                    item = SliceItem(
+                        slice_id=slice_id,
+                        start_line=cur + 1,
+                        end_line=chunk_end,
+                        char_len=count_chars(text),
+                        text=text,
+                    )
+                    write_item(item)
+                    slices_written += 1
+                    if used_provider:
+                        providers_used.add(used_provider)
+                    if used_model:
+                        models_used.add(used_model)
+                    slice_id += 1
+                    cur = chunk_end
+                    stop = True
+                    continue
+
                 item = SliceItem(
                     slice_id=slice_id,
-                    source_txt=str(txt_path),
                     start_line=cur + 1,
                     end_line=chunk_end,
                     char_len=None,
                     text=None,
-                    created_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                    method="error",
-                    provider=last_provider,
-                    model=last_model,
                     error=str(last_error) if last_error is not None else "LLM returned no valid cuts",
                 )
                 write_item(item)
+                slices_written += 1
                 run_error = item.error
+                run_error_ctx = {
+                    "provider": last_provider,
+                    "model": last_model,
+                    "start_line": item.start_line,
+                    "end_line": item.end_line,
+                }
                 stop = True
                 continue
 
-            # 应用切割；如果模型在此部分拒绝切割，请确保进度
+            # 应用切割：不再严格限制在 5000～6000，改为“尽量贴近目标范围”。
             progressed = False
-            for cut in cuts:
-                end_idx = cut.end_line - 1
-                if end_idx < cur:
-                    continue
-                text = "\n".join(sentences[cur : end_idx + 1])
-                char_len = count_chars(text)
-                if char_len < slice_config.target_chars_min:
-                    # 这个切分点太靠前了，继续尝试后面的切分点（更长，可能达标）
-                    continue
-                if char_len > slice_config.target_chars_max:
-                    # 已经超过上限，后面的 end_line 只会更长，直接终止
+            target_mid = (slice_config.target_chars_min + slice_config.target_chars_max) // 2
+            while True:
+                best: tuple[int, int, int, Cut, str, int] | None = None
+                # score = (penalty_to_range, abs_to_mid, end_idx)
+                for cut in cuts:
+                    end_idx = cut.end_line - 1
+                    if end_idx < cur:
+                        continue
+                    text = "\n".join(sentences[cur : end_idx + 1])
+                    char_len = count_chars(text)
+                    if char_len < slice_config.target_chars_min:
+                        penalty = slice_config.target_chars_min - char_len
+                    elif char_len > slice_config.target_chars_max:
+                        penalty = char_len - slice_config.target_chars_max
+                    else:
+                        penalty = 0
+                    score = (penalty, abs(char_len - target_mid), end_idx)
+                    packed = (score[0], score[1], score[2], cut, text, char_len)
+                    if best is None or packed[:3] < best[:3]:
+                        best = packed
+
+                if best is None:
                     break
+
+                _, _, end_idx, chosen_cut, chosen_text, chosen_len = best
                 item = SliceItem(
                     slice_id=slice_id,
-                    source_txt=str(txt_path),
                     start_line=cur + 1,
                     end_line=end_idx + 1,
-                    char_len=char_len,
-                    text=text,
-                    created_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                    method="llm",
-                    title=cut.title,
-                    summary=cut.summary,
-                    provider=used_provider,
-                    model=used_model,
+                    char_len=chosen_len,
+                    text=chosen_text,
+                    title=chosen_cut.title,
+                    summary=chosen_cut.summary,
                 )
                 write_item(item)
+                slices_written += 1
+                if used_provider:
+                    providers_used.add(used_provider)
+                if used_model:
+                    models_used.add(used_model)
+
                 slice_id += 1
                 if max_slices is not None and slice_id > max_slices:
                     stop = True
@@ -302,32 +340,46 @@ def slice_txt_to_json(
             if not progressed:
                 item = SliceItem(
                     slice_id=slice_id,
-                    source_txt=str(txt_path),
                     start_line=cur + 1,
                     end_line=chunk_end,
                     char_len=None,
                     text=None,
-                    created_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                    method="error",
-                    provider=used_provider,
-                    model=used_model,
                     error=(
-                        "LLM returned cuts but none could be applied: "
-                        f"no candidate end_line produced char_len within "
-                        f"[{slice_config.target_chars_min}, {slice_config.target_chars_max}] "
-                        "under current counting rules"
+                        "LLM returned cuts but none could be applied: all candidate end_line are behind current cursor"
                     ),
                 )
                 write_item(item)
+                slices_written += 1
                 run_error = item.error
+                run_error_ctx = {
+                    "provider": used_provider,
+                    "model": used_model,
+                    "start_line": item.start_line,
+                    "end_line": item.end_line,
+                }
                 stop = True
 
         f.write("\n]\n")
 
+    run_meta["slices_written"] = slices_written
+    run_meta["providers_used"] = sorted([p for p in providers_used if p])
+    run_meta["models_used"] = sorted([m for m in models_used if m])
+    if run_error:
+        run_meta["status"] = "error"
+        run_meta["error"] = {"message": run_error, **(run_error_ctx or {})}
+    else:
+        run_meta["status"] = "ok"
+    write_run_json()
+
     if run_error:
         # Also surface the error in terminal output (stderr), while keeping output JSON written.
-        print(f"slice error: {run_error}", file=sys.stderr)
+        if run_error_ctx:
+            ctx = ", ".join(f"{k}={v}" for k, v in run_error_ctx.items() if v is not None)
+            print(f"slice error: {run_error} ({ctx})", file=sys.stderr)
+        else:
+            print(f"slice error: {run_error}", file=sys.stderr)
         print(f"output: {out_json}", file=sys.stderr)
+        print(f"run: {meta_path}", file=sys.stderr)
         raise SliceRunError(out_path=out_json, message=run_error)
 
     return out_json
